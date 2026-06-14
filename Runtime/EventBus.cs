@@ -1,37 +1,52 @@
 ﻿using System;
 using System.Collections.Generic;
-using NUnit.Framework;
 
 namespace BasicEventBus
 {
-    public class EventBus<TBaseEvent> : IEventBus<TBaseEvent>
+    public sealed class EventBus<TBaseEvent>
     {
-        private readonly Dictionary<Type, List<Delegate>> _handlers = new();
+        private readonly Dictionary<Type, List<HandlerEntry>> _handlers = new();
         private readonly Dictionary<Type, HashSet<Delegate>> _onceHandlers = new();
 
         private readonly Queue<Action> _queuedPublishes = new();
         private bool _isDispatching;
         private bool _isConsumed;
         
-        public void Subscribe<TEvent>(Action<TEvent> handler) where TEvent : TBaseEvent
+        public void Subscribe<TEvent>(Action<TEvent> handler, int priority = 0) where TEvent : TBaseEvent
         {
-            Assert.IsNotNull(handler);
+            if (handler == null)
+            {
+                throw new ArgumentNullException(nameof(handler));
+            }
 
             var key = typeof(TEvent);
-            if (!_handlers.TryGetValue(key, out List<Delegate> list))
+            if (!_handlers.TryGetValue(key, out List<HandlerEntry> list))
             {
-                list = new List<Delegate>();
+                list = new List<HandlerEntry>();
                 _handlers[key] = list;
             }
 
-            list.Add(handler);
+            int index = list.Count;
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i].Priority < priority)
+                {
+                    index = i;
+                    break;
+                }
+            }
+
+            list.Insert(index, new HandlerEntry(priority, handler));
         }
 
-        public void Once<TEvent>(Action<TEvent> handler) where TEvent : TBaseEvent
+        public void Once<TEvent>(Action<TEvent> handler, int priority = 0) where TEvent : TBaseEvent
         {
-            Assert.IsNotNull(handler);
+            if (handler == null)
+            {
+                throw new ArgumentNullException(nameof(handler));
+            }
+            
             var key = typeof(TEvent);
-
             if (!_onceHandlers.TryGetValue(key, out HashSet<Delegate> onceSet))
             {
                 onceSet = new HashSet<Delegate>();
@@ -39,23 +54,28 @@ namespace BasicEventBus
             }
 
             onceSet.Add(handler);
-            Subscribe(handler);
+            Subscribe(handler, priority);
         }
 
-        public IDisposable Scoped<TEvent>(Action<TEvent> handler) where TEvent : TBaseEvent
+        public IDisposable Scoped<TEvent>(Action<TEvent> handler, int priority = 0) where TEvent : TBaseEvent
         {
-            Subscribe(handler);
+            Subscribe(handler, priority);
             return new Subscription<TEvent>(this, handler);
         }
 
         public void Unsubscribe<TEvent>(Action<TEvent> handler) where TEvent : TBaseEvent
         {
-            Assert.IsNotNull(handler);
-            var key = typeof(TEvent);
-
-            if (_handlers.TryGetValue(key, out List<Delegate> list))
+            if (handler == null)
             {
-                list.Remove(handler);
+                throw new ArgumentNullException(nameof(handler));
+            }
+            
+            var key = typeof(TEvent);
+            if (_handlers.TryGetValue(key, out List<HandlerEntry> list))
+            {
+                int index = list.FindIndex(e => e.Handler == (Delegate)handler);
+                if (index >= 0) list.RemoveAt(index);
+                
                 if (list.Count == 0)
                     _handlers.Remove(key);
             }
@@ -96,24 +116,24 @@ namespace BasicEventBus
         {
             var key = typeof(TEvent);
 
-            if (!_handlers.TryGetValue(key, out List<Delegate> list) || list.Count == 0)
+            if (!_handlers.TryGetValue(key, out List<HandlerEntry> list) || list.Count == 0)
                 return;
 
             _isDispatching = true;
 
             try
             {
-                Delegate[] snapshot = list.ToArray();
+                HandlerEntry[] snapshot = list.ToArray();
 
                 // Remove once-handlers before invoking. If a handler throws, it still won't fire again.
                 if (_onceHandlers.TryGetValue(key, out HashSet<Delegate> onceSet))
                 {
-                    foreach (var d in snapshot)
+                    foreach (var entry in snapshot)
                     {
-                        if (!onceSet.Contains(d)) continue;
+                        if (!onceSet.Contains(entry.Handler)) continue;
 
-                        onceSet.Remove(d);
-                        list.Remove(d);
+                        onceSet.Remove(entry.Handler);
+                        list.Remove(entry);
                     }
 
                     if (onceSet.Count == 0) _onceHandlers.Remove(key);
@@ -123,14 +143,14 @@ namespace BasicEventBus
                 _isConsumed = false;
                 List<Exception> failures = null;
 
-                foreach (var d in snapshot)
+                foreach (var entry in snapshot)
                 {
                     if (_isConsumed)
                         break;
 
                     try
                     {
-                        ((Action<TEvent>)d)(message);
+                        ((Action<TEvent>)entry.Handler)(message);
                     }
                     catch (Exception ex)
                     {
@@ -154,6 +174,37 @@ namespace BasicEventBus
 
         #region Internal Types
 
+        private readonly struct HandlerEntry : IEquatable<HandlerEntry>
+        {
+            public readonly int Priority;
+            public readonly Delegate Handler;
+
+            public HandlerEntry(int priority, Delegate handler)
+            {
+                Priority = priority;
+                Handler = handler;
+            }
+
+            public bool Equals(HandlerEntry other)
+            {
+                return Priority == other.Priority && Equals(Handler, other.Handler);
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is HandlerEntry other && Equals(other);
+            }
+
+            public override int GetHashCode()
+            {
+#if NET_STANDARD_2_1
+                return HashCode.Combine(Priority, Handler);
+#else
+                unchecked { return (Priority * 397) ^ (Handler?.GetHashCode() ?? 0); }
+#endif
+            }
+        }
+        
         private sealed class Subscription<TEvent> : IDisposable
             where TEvent : TBaseEvent
         {
