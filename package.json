@@ -1,0 +1,21 @@
+{
+  "name": "com.anasiqbal.basic-event-bus",
+  "displayName": "Basic Event Bus",
+  "version": "1.0.0",
+  "unity": "2019.4",
+  "description": "A strongly-typed, dependency-free event bus in pure C#. No framework, no Unity, no string keys.",
+  "keywords": [
+    "event-bus",
+    "events",
+    "messaging",
+    "pub-sub",
+    "observer",
+    "decoupling"
+  ],
+  "author": {
+    "name": "Anas Iqbal",
+    "url": "https://github.com/anasiqbal"
+  },
+  "documentationUrl": "https://github.com/anasiqbal/BasicEventBus#readme",
+  "dependencies": {}
+}
