@@ -1,7 +1,7 @@
 {
   "name": "com.anasiqbal.basic-event-bus",
   "displayName": "Basic Event Bus",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "unity": "2019.4",
   "description": "A strongly-typed, dependency-free event bus in pure C#. No framework, no Unity, no string keys.",
   "keywords": [
